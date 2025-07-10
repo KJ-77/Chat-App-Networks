@@ -1,0 +1,12 @@
+# No external dependencies required - uses only Python standard library modules
+# The following modules are used:
+# - socket: For network communication
+# - threading: For handling multiple clients concurrently
+# - json: For message serialization/deserialization
+# - datetime: For timestamps
+# - sys: For command line arguments
+
+# If you want to add future enhancements, you might consider:
+# tkinter>=8.6  # For GUI interface
+# cryptography>=3.4.8  # For message encryption
+# colorama>=0.4.4  # For colored terminal output
