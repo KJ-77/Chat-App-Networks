@@ -93,15 +93,24 @@ class ChatServer:
             }
             message_json = json.dumps(message)
             client_socket.send(message_json.encode('utf-8'))
+        except ConnectionResetError:
+            print(f"Client disconnected while sending message")
+            self.disconnect_client(client_socket)
         except Exception as e:
             print(f"Error sending message: {e}")
+            self.disconnect_client(client_socket)
     
     def receive_message(self, client_socket):
         """Receive a message from a client"""
         try:
             message = client_socket.recv(1024).decode('utf-8')
             if message:
-                return json.loads(message)
+                # Try to parse as JSON first
+                try:
+                    return json.loads(message)
+                except json.JSONDecodeError:
+                    # If not JSON, treat as plain text (for nickname)
+                    return message
             return None
         except Exception as e:
             print(f"Error receiving message: {e}")
@@ -110,6 +119,10 @@ class ChatServer:
     def process_command(self, client_socket, message):
         """Process commands from clients"""
         try:
+            # Handle plain text messages (nicknames)
+            if isinstance(message, str):
+                return
+            
             command = message.get('command', '').upper()
             content = message.get('content', '')
             nickname = self.clients[client_socket]['nickname']
@@ -229,9 +242,16 @@ class ChatServer:
     def broadcast_to_room(self, room_name, msg_type, content, exclude=None):
         """Broadcast message to all clients in a room"""
         if room_name in self.rooms:
-            for client in self.rooms[room_name].copy():
+            # Make a copy of the set to avoid modification during iteration
+            clients_to_notify = self.rooms[room_name].copy()
+            for client in clients_to_notify:
                 if client != exclude:
-                    self.send_message(client, msg_type, content)
+                    # Check if client is still connected
+                    if client in self.clients:
+                        self.send_message(client, msg_type, content)
+                    else:
+                        # Remove disconnected client from room
+                        self.rooms[room_name].discard(client)
     
     def leave_room(self, client_socket, room_name):
         """Remove client from a room"""
@@ -251,24 +271,32 @@ class ChatServer:
     
     def disconnect_client(self, client_socket):
         """Clean up when a client disconnects"""
-        if client_socket in self.clients:
-            nickname = self.clients[client_socket]['nickname']
-            current_room = self.clients[client_socket]['room']
-            
-            # Leave current room
-            if current_room:
-                self.leave_room(client_socket, current_room)
-            
-            # Remove from server data structures
-            del self.clients[client_socket]
-            self.nicknames.discard(nickname)
-            
-            print(f"Client {nickname} disconnected")
-        
         try:
-            client_socket.close()
-        except:
-            pass
+            if client_socket in self.clients:
+                nickname = self.clients[client_socket]['nickname']
+                current_room = self.clients[client_socket]['room']
+                
+                # Leave current room
+                if current_room:
+                    self.leave_room(client_socket, current_room)
+                
+                # Remove from server data structures
+                del self.clients[client_socket]
+                self.nicknames.discard(nickname)
+                
+                print(f"Client {nickname} disconnected")
+            
+            # Close socket
+            try:
+                client_socket.close()
+            except:
+                pass
+        except Exception as e:
+            print(f"Error disconnecting client: {e}")
+            try:
+                client_socket.close()
+            except:
+                pass
     
     def shutdown_server(self):
         """Gracefully shutdown the server"""

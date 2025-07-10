@@ -26,6 +26,10 @@ class ChatClient:
     def send_message(self, command, content=""):
         """Send a message to the server"""
         try:
+            if not self.connected:
+                print("Not connected to server!")
+                return
+            
             message = {
                 'command': command,
                 'content': content
@@ -33,7 +37,8 @@ class ChatClient:
             message_json = json.dumps(message)
             self.client_socket.send(message_json.encode('utf-8'))
         except Exception as e:
-            print(f"Error sending message: {e}")
+            print(f"Connection lost: {e}")
+            self.connected = False
     
     def receive_messages(self):
         """Listen for messages from the server"""
@@ -44,10 +49,17 @@ class ChatClient:
                     data = json.loads(message)
                     self.handle_server_message(data)
                 else:
+                    print("Server disconnected")
+                    self.connected = False
                     break
+            except ConnectionResetError:
+                print("Connection to server lost")
+                self.connected = False
+                break
             except Exception as e:
                 if self.connected:
-                    print(f"Error receiving message: {e}")
+                    print(f"Connection error: {e}")
+                    self.connected = False
                 break
     
     def handle_server_message(self, data):
@@ -112,6 +124,11 @@ class ChatClient:
         """Process user input and send commands to server"""
         while self.connected:
             try:
+                # Check if still connected
+                if not self.connected:
+                    print("Connection lost. Exiting...")
+                    break
+                
                 user_input = input().strip()
                 
                 if not user_input:
@@ -146,8 +163,14 @@ class ChatClient:
             except KeyboardInterrupt:
                 self.disconnect()
                 break
+            except EOFError:
+                # Handle Ctrl+Z or input stream closed
+                self.disconnect()
+                break
             except Exception as e:
                 print(f"Error processing input: {e}")
+                if not self.connected:
+                    break
     
     def start_client(self):
         """Start the chat client"""
