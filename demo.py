@@ -52,10 +52,18 @@ def main():
             return
         
         print("\nServer started successfully!")
-        print("\nTo test the chat application:")
+        print("\nTo test the chat application, choose one of these options:")
+        print("\n=== Console Client ===")
         print("1. Run 'python client.py' in separate terminal windows")
         print("2. Enter different nicknames for each client")
-        print("3. Try commands like:")
+        
+        print("\n=== GUI Client ===")
+        print("1. Run 'python gui_client.py' for a modern GUI interface")
+        print("2. Click 'Connect' and enter your nickname")
+        print("3. Use buttons and dialogs for easy chatting")
+        
+        print("\n=== Test Commands ===")
+        print("Try these commands in any client:")
         print("   - JOIN general")
         print("   - MSG Hello everyone!")
         print("   - MSG username:Private message")

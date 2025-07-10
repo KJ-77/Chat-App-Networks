@@ -16,9 +16,13 @@ A multithreaded chat application built with Python sockets that supports real-ti
 ```
 Chat App Networks/
 ├── server.py          # Chat server implementation
-├── client.py          # Chat client implementation
+├── client.py          # Console chat client implementation
+├── gui_client.py      # GUI chat client implementation
 ├── README.md          # This file
-└── requirements.txt   # Python dependencies
+├── requirements.txt   # Python dependencies
+├── demo.py           # Demo script
+├── test_chat.py      # Test script
+└── start_chat.bat    # Windows launcher script
 ```
 
 ## Installation
@@ -43,13 +47,27 @@ The server will start on `localhost:55555` by default.
 
 ### Starting the Client
 
-Run the client in a separate terminal:
+You now have two client options:
+
+**Console Client** (original):
 
 ```bash
 python client.py
 ```
 
-You can also specify a custom host and port:
+**GUI Client** (new):
+
+```bash
+python gui_client.py
+```
+
+**Or use the launcher script on Windows:**
+
+```bash
+start_chat.bat
+```
+
+You can also specify a custom host and port for the console client:
 
 ```bash
 python client.py <host> <port>
@@ -68,6 +86,8 @@ Once connected, you can use these commands:
 - `QUIT` - Exit the chat application
 
 ### Example Usage
+
+**Console Client:**
 
 1. **Join a chatroom:**
 
@@ -98,6 +118,15 @@ Once connected, you can use these commands:
    LEAVE
    ```
 
+**GUI Client:**
+
+1. **Connect**: Click "Connect", enter server details and nickname
+2. **Join Room**: Click "Join Room" button or type `/join roomname`
+3. **Send Messages**: Type in the input box and press Enter
+4. **Private Messages**: Double-click a username or type `/msg user:message`
+5. **Room Navigation**: Double-click rooms to join them
+6. **View Lists**: Users and rooms are automatically displayed and updated
+
 ## Architecture
 
 ### Server Components
@@ -111,9 +140,10 @@ Once connected, you can use these commands:
 
 ### Client Components
 
-- **ChatClient Class**: Main client class for server communication
-- **Message Handling**: Separate thread for receiving messages
-- **Command Processing**: Validates and sends commands to server
+- **ChatClient Class**: Console-based client for server communication
+- **ChatGUI Class**: Modern GUI client with tkinter interface
+- **Message Handling**: Separate threads for receiving messages in both clients
+- **Command Processing**: Validates and sends commands to server (console and GUI)
 
 ### Communication Protocol
 
@@ -183,26 +213,34 @@ Messages are exchanged in JSON format:
 
 To test the application:
 
-1. Start the server in one terminal
-2. Start multiple clients in separate terminals
-3. Test different scenarios:
+1. **Start the server**: `python server.py`
+2. **Choose your client type**:
+   - **Console**: `python client.py` (multiple terminals)
+   - **GUI**: `python gui_client.py` (multiple windows)
+   - **Mixed**: Use both console and GUI clients together!
+3. **Test different scenarios**:
    - Multiple users joining the same room
    - Private messaging between users
-   - Room switching
+   - Room switching and management
    - User disconnection handling
+   - GUI vs Console client interaction
 
 ## Future Enhancements
 
 Potential improvements:
 
-- GUI interface using tkinter or PyQt
+- ✅ **GUI interface using tkinter** - COMPLETED!
 - Message history persistence
 - File sharing capabilities
 - User authentication
 - Room passwords
 - Message encryption
-- Emoji support
-- User status indicators
+- Emoji support and reactions
+- User status indicators (online, away, busy)
+- Dark/Light theme toggle
+- Sound notifications
+- Message search functionality
+- Chat room moderation features
 
 ## Troubleshooting
 
@@ -216,6 +254,45 @@ Potential improvements:
 ### Debug Mode
 
 For debugging, you can add print statements or use Python's logging module to track message flow and connection states.
+
+## GUI Features
+
+The new GUI client (`gui_client.py`) provides a modern, user-friendly interface with:
+
+### 🎨 Visual Interface
+
+- **Modern Design**: Clean, dark theme with intuitive layout
+- **Real-time Chat**: Messages appear instantly with proper formatting
+- **Color-coded Messages**: Different colors for system, public, private, and error messages
+- **Scrollable Chat**: Auto-scrolling chat history with timestamp display
+
+### 🔧 User-Friendly Controls
+
+- **Connection Panel**: Easy server connection with host/port input
+- **Message Input**: Large text input with Enter-to-send functionality
+- **Room Management**: Join/leave rooms with button clicks
+- **User Lists**: See online users and active rooms in real-time
+
+### 💬 Enhanced Messaging
+
+- **Click-to-Message**: Double-click users to send private messages
+- **Room Quick-Join**: Double-click rooms to join instantly
+- **Slash Commands**: Support for `/join`, `/leave`, `/list`, `/msg`, `/help`
+- **Dialog Boxes**: User-friendly input dialogs for room names and messages
+
+### 🎯 Smart Features
+
+- **Auto-refresh**: Automatic updates of user and room lists
+- **Error Handling**: Clear error messages and connection status
+- **Help System**: Built-in help accessible via `/help` or dialog
+- **Graceful Disconnect**: Clean connection handling and resource cleanup
+
+### 📱 Interface Layout
+
+- **Left Panel**: Main chat area with message history
+- **Right Panel**: Current room, online users, and active rooms
+- **Top Bar**: Connection status and server controls
+- **Bottom**: Message input and send button
 
 ## License
 

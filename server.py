@@ -49,10 +49,19 @@ class ChatServer:
             self.send_message(client_socket, "NICK_REQUEST", "Please enter your nickname:")
             
             # Wait for nickname response
-            nickname = self.receive_message(client_socket)
+            nickname_response = self.receive_message(client_socket)
+            
+            # Extract nickname from response
+            if isinstance(nickname_response, str):
+                nickname = nickname_response.strip()
+            else:
+                # If it's a dict, it might be a command - reject
+                self.send_message(client_socket, "NICK_ERROR", "Invalid nickname format!")
+                client_socket.close()
+                return
             
             # Validate nickname
-            if not nickname or nickname in self.nicknames:
+            if not nickname or nickname in self.nicknames or ' ' in nickname:
                 self.send_message(client_socket, "NICK_ERROR", "Nickname already taken or invalid!")
                 client_socket.close()
                 return
@@ -119,13 +128,28 @@ class ChatServer:
     def process_command(self, client_socket, message):
         """Process commands from clients"""
         try:
-            # Handle plain text messages (nicknames)
+            # Handle plain text messages (nicknames) - ignore them in this context
             if isinstance(message, str):
+                # This might be a stray nickname or plain text - log it
+                print(f"Received plain text message: {message}")
+                return
+            
+            # Handle dictionary messages (commands)
+            if not isinstance(message, dict):
+                print(f"Received non-dict message: {type(message)}")
                 return
             
             command = message.get('command', '').upper()
             content = message.get('content', '')
+            
+            # Check if client is still connected
+            if client_socket not in self.clients:
+                print(f"Received command from unknown client")
+                return
+                
             nickname = self.clients[client_socket]['nickname']
+            
+            print(f"Processing command '{command}' from {nickname}")
             
             if command == 'JOIN':
                 self.handle_join_room(client_socket, content)
@@ -140,6 +164,8 @@ class ChatServer:
                 
         except Exception as e:
             print(f"Error processing command: {e}")
+            print(f"Message type: {type(message)}")
+            print(f"Message content: {message}")
     
     def handle_join_room(self, client_socket, room_name):
         """Handle JOIN command"""
