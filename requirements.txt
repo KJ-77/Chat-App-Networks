@@ -5,8 +5,12 @@
 # - json: For message serialization/deserialization
 # - datetime: For timestamps
 # - sys: For command line arguments
+# - tkinter: For GUI interfaces (both client and server admin panel)
+# - os: For file operations and system functions
 
 # GUI Dependencies - tkinter comes built-in with Python
+# Both gui_client.py and server_gui.py use tkinter for modern interfaces
+
 # Additional enhancements you might consider:
 # cryptography>=3.4.8  # For message encryption
 # colorama>=0.4.4  # For colored terminal output

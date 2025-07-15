@@ -53,14 +53,22 @@ def main():
         
         print("\nServer started successfully!")
         print("\nTo test the chat application, choose one of these options:")
-        print("\n=== Console Client ===")
-        print("1. Run 'python client.py' in separate terminal windows")
-        print("2. Enter different nicknames for each client")
         
-        print("\n=== GUI Client ===")
-        print("1. Run 'python gui_client.py' for a modern GUI interface")
-        print("2. Click 'Connect' and enter your nickname")
-        print("3. Use buttons and dialogs for easy chatting")
+        print("\n=== Server Options ===")
+        print("• Console Server: Already running (this window)")
+        print("• Admin GUI: Run 'python server_gui.py' for full admin control")
+        
+        print("\n=== Client Options ===")
+        print("1. Run 'python client.py' for console interface")
+        print("2. Run 'python gui_client.py' for modern GUI interface")
+        print("3. Use both types of clients together!")
+        
+        print("\n=== Server Admin GUI Features ===")
+        print("• Real-time monitoring of all connections")
+        print("• Kick users and manage rooms")
+        print("• Send global broadcasts and announcements")
+        print("• View detailed logs and generate reports")
+        print("• Monitor server statistics and activity")
         
         print("\n=== Test Commands ===")
         print("Try these commands in any client:")
