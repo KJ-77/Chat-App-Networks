@@ -752,7 +752,8 @@ class EnhancedChatServer(ChatServer):
         """Enhanced message sending with logging"""
         super().send_message(client_socket, msg_type, content)
         
-        if self.gui and msg_type in ['PUBLIC_MSG', 'PRIVATE_MSG']:
+        # Only log non-echo messages (don't log "You: ..." messages)
+        if self.gui and msg_type in ['PUBLIC_MSG', 'PRIVATE_MSG'] and not content.startswith('You: '):
             self.gui.log_message(content, msg_type.lower().replace('_msg', ''))
     
     def disconnect_client(self, client_socket):

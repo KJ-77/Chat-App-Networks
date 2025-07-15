@@ -2,6 +2,8 @@ import socket
 import threading
 import json
 import sys
+import base64
+import os
 
 class ChatClient:
     def __init__(self, host='localhost', port=55555):
@@ -35,7 +37,9 @@ class ChatClient:
                 'content': content
             }
             message_json = json.dumps(message)
-            self.client_socket.send(message_json.encode('utf-8'))
+            message_bytes = message_json.encode('utf-8')
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
+            self.client_socket.send(length_bytes + message_bytes)
         except Exception as e:
             print(f"Connection lost: {e}")
             self.connected = False
@@ -44,7 +48,25 @@ class ChatClient:
         """Listen for messages from the server"""
         while self.connected:
             try:
-                message = self.client_socket.recv(1024).decode('utf-8')
+                # First, receive the length of the message
+                length_data = self.client_socket.recv(4)
+                if not length_data:
+                    break
+                
+                message_length = int.from_bytes(length_data, byteorder='big')
+                
+                # Now receive the actual message
+                message_data = b''
+                while len(message_data) < message_length:
+                    chunk = self.client_socket.recv(min(4096, message_length - len(message_data)))
+                    if not chunk:
+                        break
+                    message_data += chunk
+                
+                if len(message_data) != message_length:
+                    break
+                
+                message = message_data.decode('utf-8')
                 if message:
                     data = json.loads(message)
                     self.handle_server_message(data)
@@ -94,6 +116,10 @@ class ChatClient:
             print(f"[{timestamp}] \n{content}")
         elif msg_type == 'ERROR':
             print(f"[{timestamp}] ❌ Error: {content}")
+        elif msg_type == 'FILE_SENT':
+            print(f"[{timestamp}] ✅ {content}")
+        elif msg_type == 'FILE_RECEIVED':
+            self.handle_received_file(data)
         else:
             print(f"[{timestamp}] {content}")
     
@@ -103,7 +129,9 @@ class ChatClient:
             nickname = input("Enter your nickname: ").strip()
             if nickname and ' ' not in nickname:
                 self.nickname = nickname
-                self.client_socket.send(nickname.encode('utf-8'))
+                nickname_bytes = nickname.encode('utf-8')
+                length_bytes = len(nickname_bytes).to_bytes(4, byteorder='big')
+                self.client_socket.send(length_bytes + nickname_bytes)
                 break
             else:
                 print("Invalid nickname! Please enter a nickname without spaces.")
@@ -116,6 +144,8 @@ class ChatClient:
         print("MSG <user>:<message> - Send a private message to a user")
         print("LEAVE               - Leave the current chatroom")
         print("LIST                - Show all active users and rooms")
+        print("FILE <filename>     - Send file to current room")
+        print("PFILE <user> <filename> - Send file privately to a user")
         print("HELP                - Show this help message")
         print("QUIT                - Exit the chat application")
         print("=====================\n")
@@ -148,15 +178,34 @@ class ChatClient:
                 content = parts[1] if len(parts) > 1 else ""
                 
                 # Validate commands
-                if command in ['JOIN', 'MSG', 'LEAVE', 'LIST']:
+                if command in ['JOIN', 'MSG', 'LEAVE', 'LIST', 'FILE', 'PFILE']:
                     if command == 'JOIN' and not content:
                         print("❌ Usage: JOIN <room_name>")
                         continue
                     elif command == 'MSG' and not content:
                         print("❌ Usage: MSG <message> or MSG <user>:<message>")
                         continue
+                    elif command == 'FILE' and not content:
+                        print("❌ Usage: FILE <filename>")
+                        continue
+                    elif command == 'PFILE':
+                        if not content or len(content.split(' ', 1)) != 2:
+                            print("❌ Usage: PFILE <user> <filename>")
+                            continue
                     
-                    self.send_message(command, content)
+                    # Handle file commands specially
+                    if command == 'FILE':
+                        if not self.current_room:
+                            print("❌ You must join a room first to send files!")
+                            continue
+                        self.send_file(content, target=self.current_room, is_private=False)
+                    elif command == 'PFILE':
+                        parts = content.split(' ', 1)
+                        username = parts[0]
+                        filepath = parts[1]
+                        self.send_file(filepath, target=username, is_private=True)
+                    else:
+                        self.send_message(command, content)
                 else:
                     print("❌ Unknown command! Type 'HELP' for available commands.")
                     
@@ -209,6 +258,117 @@ class ChatClient:
             return f"Connected as {self.nickname} in room '{self.current_room}'"
         else:
             return f"Connected as {self.nickname} (no room)"
+    
+    def send_file(self, filepath, target=None, is_private=False):
+        """Send file to server"""
+        try:
+            if not os.path.exists(filepath):
+                print(f"❌ File not found: {filepath}")
+                return
+            
+            # Check file size (5MB limit)
+            file_size = os.path.getsize(filepath)
+            max_size = 5 * 1024 * 1024  # 5MB
+            
+            if file_size > max_size:
+                print(f"❌ File too large! Maximum size is 5MB. Your file is {file_size / (1024*1024):.1f}MB")
+                return
+            
+            # Check file type
+            filename = os.path.basename(filepath)
+            file_ext = os.path.splitext(filename)[1].lower()
+            allowed_types = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.txt', '.pdf', 
+                           '.doc', '.docx', '.rtf', '.zip', '.rar', '.7z', '.mp3', '.wav', 
+                           '.ogg', '.mp4', '.avi', '.mov', '.webm', '.py', '.js', '.html', 
+                           '.css', '.json', '.xml', '.csv'}
+            
+            if file_ext not in allowed_types:
+                print(f"❌ File type '{file_ext}' not allowed!")
+                return
+            
+            # Read and encode file
+            with open(filepath, 'rb') as f:
+                file_content = f.read()
+            
+            file_content_b64 = base64.b64encode(file_content).decode('utf-8')
+            
+            # Send file command
+            file_command = {
+                'command': 'FILE',
+                'target': target,
+                'is_private': is_private,
+                'file_data': {
+                    'filename': filename,
+                    'content': file_content_b64,
+                    'size': file_size
+                }
+            }
+            
+            print(f"📤 Sending {filename} ({'privately to ' + target if is_private else 'to room'})...")
+            message_json = json.dumps(file_command)
+            message_bytes = message_json.encode('utf-8')
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
+            self.client_socket.send(length_bytes + message_bytes)
+            
+        except Exception as e:
+            print(f"❌ Failed to send file: {e}")
+    
+    def handle_received_file(self, data):
+        """Handle received file from server"""
+        try:
+            file_info = data.get('file_info', {})
+            file_content_b64 = data.get('file_content', '')
+            is_private = data.get('is_private', False)
+            timestamp = data.get('timestamp', '')
+            
+            filename = file_info.get('filename', 'unknown_file')
+            sender = file_info.get('sender', 'Unknown')
+            file_size = file_info.get('size', 0)
+            
+            # Format file size
+            if file_size < 1024:
+                size_str = f"{file_size} bytes"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size / 1024:.1f} KB"
+            else:
+                size_str = f"{file_size / (1024 * 1024):.1f} MB"
+            
+            privacy_indicator = "🔒 Private" if is_private else "📢 Room"
+            print(f"[{timestamp}] 📎 {privacy_indicator} file from {sender}: {filename} ({size_str})")
+            
+            # Ask if user wants to download
+            response = input("Download this file? (y/n): ").strip().lower()
+            if response in ['y', 'yes']:
+                self.download_file(file_content_b64, filename)
+                
+        except Exception as e:
+            print(f"❌ Error receiving file: {e}")
+    
+    def download_file(self, file_content_b64, filename):
+        """Download and save received file"""
+        try:
+            # Create downloads directory if it doesn't exist
+            downloads_dir = "downloads"
+            if not os.path.exists(downloads_dir):
+                os.makedirs(downloads_dir)
+            
+            # Generate unique filename if file exists
+            save_path = os.path.join(downloads_dir, filename)
+            counter = 1
+            while os.path.exists(save_path):
+                name, ext = os.path.splitext(filename)
+                save_path = os.path.join(downloads_dir, f"{name}_{counter}{ext}")
+                counter += 1
+            
+            # Decode and save file
+            file_content = base64.b64decode(file_content_b64)
+            with open(save_path, 'wb') as f:
+                f.write(file_content)
+            
+            print(f"📥 File saved as: {save_path}")
+            
+        except Exception as e:
+            print(f"❌ Failed to save file: {e}")
 
 def main():
     """Main function to run the chat client"""
@@ -228,4 +388,6 @@ def main():
     client.start_client()
 
 if __name__ == "__main__":
-    main()
+    # Start the chat client
+    client = ChatClient()
+    client.start_client()

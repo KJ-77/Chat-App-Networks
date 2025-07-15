@@ -1,0 +1,11 @@
+This is a test file for demonstrating file sharing in the chat application!
+
+Features implemented:
+- File size limit: 5MB maximum
+- Allowed file types: images, documents, archives, audio, video, code files
+- Both room-wide and private file sharing
+- Base64 encoding for safe transmission
+- Download functionality with unique naming
+- File validation on both client and server side
+
+The file sharing system works for both GUI and console clients!

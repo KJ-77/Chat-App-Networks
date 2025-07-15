@@ -2,6 +2,9 @@ import socket
 import threading
 import json
 from datetime import datetime
+import base64
+import os
+import mimetypes
 
 class ChatServer:
     def __init__(self, host='localhost', port=55555):
@@ -11,6 +14,28 @@ class ChatServer:
         self.rooms = {}    # {room_name: set of client_sockets}
         self.nicknames = set()  # Set of active nicknames
         self.server_socket = None
+        
+        # File sharing settings
+        self.max_file_size = 5 * 1024 * 1024  # 5MB max file size
+        self.allowed_file_types = {
+            # Images
+            '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+            # Documents
+            '.txt', '.pdf', '.doc', '.docx', '.rtf',
+            # Archives
+            '.zip', '.rar', '.7z',
+            # Audio
+            '.mp3', '.wav', '.ogg',
+            # Video (small files only)
+            '.mp4', '.avi', '.mov', '.webm',
+            # Code/Data
+            '.py', '.js', '.html', '.css', '.json', '.xml', '.csv'
+        }
+        
+        # Create uploads directory if it doesn't exist
+        self.uploads_dir = "server_uploads"
+        if not os.path.exists(self.uploads_dir):
+            os.makedirs(self.uploads_dir)
         
     def start_server(self):
         """Initialize and start the server"""
@@ -101,7 +126,11 @@ class ChatServer:
                 'timestamp': datetime.now().strftime("%H:%M:%S")
             }
             message_json = json.dumps(message)
-            client_socket.send(message_json.encode('utf-8'))
+            message_bytes = message_json.encode('utf-8')
+            
+            # Send length first, then message
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
+            client_socket.send(length_bytes + message_bytes)
         except ConnectionResetError:
             print(f"Client disconnected while sending message")
             self.disconnect_client(client_socket)
@@ -112,7 +141,22 @@ class ChatServer:
     def receive_message(self, client_socket):
         """Receive a message from a client"""
         try:
-            message = client_socket.recv(1024).decode('utf-8')
+            # First, receive the length of the message
+            length_data = client_socket.recv(4)
+            if not length_data:
+                return None
+            
+            message_length = int.from_bytes(length_data, byteorder='big')
+            
+            # Now receive the actual message
+            message_data = b''
+            while len(message_data) < message_length:
+                chunk = client_socket.recv(min(4096, message_length - len(message_data)))
+                if not chunk:
+                    return None
+                message_data += chunk
+            
+            message = message_data.decode('utf-8')
             if message:
                 # Try to parse as JSON first
                 try:
@@ -159,6 +203,8 @@ class ChatServer:
                 self.handle_leave_room(client_socket)
             elif command == 'LIST':
                 self.handle_list_command(client_socket)
+            elif command == 'FILE':
+                self.handle_file_transfer(client_socket, message)
             else:
                 self.send_message(client_socket, "ERROR", "Unknown command!")
                 
@@ -335,7 +381,183 @@ class ChatServer:
         # Close server socket
         if self.server_socket:
             self.server_socket.close()
+    
+    def handle_file_transfer(self, client_socket, message):
+        """Handle file transfer command"""
+        try:
+            nickname = self.clients[client_socket]['nickname']
+            file_data = message.get('file_data', {})
+            
+            filename = file_data.get('filename', '')
+            file_content_b64 = file_data.get('content', '')
+            file_size = file_data.get('size', 0)
+            target = message.get('target', '')  # Room name or username for private
+            is_private = message.get('is_private', False)
+            
+            # Validate file
+            validation_result = self.validate_file(filename, file_size)
+            if not validation_result['valid']:
+                self.send_message(client_socket, "ERROR", validation_result['error'])
+                return
+            
+            # Decode file content
+            try:
+                file_content = base64.b64decode(file_content_b64)
+            except Exception as e:
+                self.send_message(client_socket, "ERROR", "Invalid file data!")
+                return
+            
+            # Save file to server
+            safe_filename = self.save_file(nickname, filename, file_content)
+            if not safe_filename:
+                self.send_message(client_socket, "ERROR", "Failed to save file!")
+                return
+            
+            # Create file message
+            file_info = {
+                'filename': filename,
+                'size': file_size,
+                'sender': nickname,
+                'file_id': safe_filename,
+                'timestamp': datetime.now().strftime("%H:%M:%S")
+            }
+            
+            if is_private:
+                # Send file privately
+                self.send_private_file(client_socket, target, file_info, file_content_b64)
+            else:
+                # Send file to room
+                self.send_file_to_room(client_socket, target, file_info, file_content_b64)
+                
+            print(f"{nickname} shared file {filename} ({'private to ' + target if is_private else 'in room ' + target})")
+            
+        except Exception as e:
+            print(f"Error handling file transfer: {e}")
+            self.send_message(client_socket, "ERROR", "File transfer failed!")
+    
+    def validate_file(self, filename, file_size):
+        """Validate file based on size and type restrictions"""
+        if not filename:
+            return {'valid': False, 'error': 'Filename cannot be empty!'}
+        
+        # Check file size
+        if file_size > self.max_file_size:
+            size_mb = self.max_file_size / (1024 * 1024)
+            return {'valid': False, 'error': f'File too large! Maximum size is {size_mb:.1f}MB'}
+        
+        # Check file extension
+        file_ext = os.path.splitext(filename)[1].lower()
+        if file_ext not in self.allowed_file_types:
+            allowed_types = ', '.join(sorted(self.allowed_file_types))
+            return {'valid': False, 'error': f'File type not allowed! Allowed types: {allowed_types}'}
+        
+        return {'valid': True, 'error': None}
+    
+    def save_file(self, sender_nickname, filename, file_content):
+        """Save file to server storage"""
+        try:
+            # Create safe filename with timestamp
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_filename = f"{timestamp}_{sender_nickname}_{filename}"
+            filepath = os.path.join(self.uploads_dir, safe_filename)
+            
+            with open(filepath, 'wb') as f:
+                f.write(file_content)
+            
+            return safe_filename
+        except Exception as e:
+            print(f"Error saving file: {e}")
+            return None
+    
+    def send_private_file(self, sender_socket, target_nickname, file_info, file_content_b64):
+        """Send file privately to a specific user"""
+        sender_nickname = self.clients[sender_socket]['nickname']
+        target_socket = None
+        
+        # Find target client
+        for client, info in self.clients.items():
+            if info['nickname'] == target_nickname:
+                target_socket = client
+                break
+        
+        if target_socket:
+            # Send file to target using proper protocol
+            file_message = {
+                'type': 'FILE_RECEIVED',
+                'file_info': file_info,
+                'file_content': file_content_b64,
+                'is_private': True,
+                'timestamp': datetime.now().strftime("%H:%M:%S")
+            }
+            message_json = json.dumps(file_message)
+            message_bytes = message_json.encode('utf-8')
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
+            target_socket.send(length_bytes + message_bytes)
+            
+            # Send confirmation to sender
+            self.send_message(sender_socket, "FILE_SENT", 
+                            f"File '{file_info['filename']}' sent privately to {target_nickname}")
+        else:
+            self.send_message(sender_socket, "ERROR", f"User {target_nickname} not found!")
+    
+    def send_file_to_room(self, sender_socket, room_name, file_info, file_content_b64):
+        """Send file to all users in a room"""
+        sender_nickname = self.clients[sender_socket]['nickname']
+        current_room = self.clients[sender_socket]['room']
+        
+        # Check if sender is in the specified room
+        if current_room != room_name:
+            self.send_message(sender_socket, "ERROR", f"You must be in room '{room_name}' to share files there!")
+            return
+        
+        if room_name in self.rooms:
+            file_message = {
+                'type': 'FILE_RECEIVED',
+                'file_info': file_info,
+                'file_content': file_content_b64,
+                'is_private': False,
+                'timestamp': datetime.now().strftime("%H:%M:%S")
+            }
+            
+            # Send to all clients in room except sender
+            clients_to_notify = self.rooms[room_name].copy()
+            message_json = json.dumps(file_message)
+            message_bytes = message_json.encode('utf-8')
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
+            
+            for client in clients_to_notify:
+                if client != sender_socket and client in self.clients:
+                    try:
+                        client.send(length_bytes + message_bytes)
+                    except:
+                        self.rooms[room_name].discard(client)
+            
+            # Send confirmation to sender
+            self.send_message(sender_socket, "FILE_SENT", 
+                            f"File '{file_info['filename']}' shared in room {room_name}")
+        else:
+            self.send_message(sender_socket, "ERROR", f"Room '{room_name}' not found!")
+    
+    def get_file_info(self):
+        """Get information about file sharing settings"""
+        size_mb = self.max_file_size / (1024 * 1024)
+        allowed_types = ', '.join(sorted(self.allowed_file_types))
+        return {
+            'max_size_mb': size_mb,
+            'allowed_types': allowed_types
+        }
 
 if __name__ == "__main__":
+    # Start the chat server
+    print("=== Python Chat Server ===")
+    print("Starting server on localhost:55555...")
+    
     server = ChatServer()
-    server.start_server()
+    try:
+        server.start_server()
+    except KeyboardInterrupt:
+        print("\nShutting down server...")
+        server.shutdown_server()
+    except Exception as e:
+        print(f"Server error: {e}")
+        server.shutdown_server()

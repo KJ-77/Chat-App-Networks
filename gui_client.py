@@ -1,10 +1,10 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, simpledialog
+from tkinter import ttk, scrolledtext, messagebox, simpledialog, filedialog
 import socket
 import threading
 import json
-from datetime import datetime
-import sys
+import base64
+import os
 
 class ChatGUI:
     def __init__(self):
@@ -156,6 +156,24 @@ class ChatGUI:
         self.chat_display.tag_configure("user_left", foreground="#e67e22", font=('Consolas', 10))
         self.chat_display.tag_configure("error", foreground="#e74c3c", font=('Consolas', 10, 'bold'))
         self.chat_display.tag_configure("timestamp", foreground="#95a5a6", font=('Consolas', 9))
+        self.chat_display.tag_configure("file", foreground="#3498db", font=('Consolas', 10, 'bold'))
+        self.chat_display.tag_configure("file_link", 
+                                       foreground="#0066cc", 
+                                       font=('Consolas', 10, 'underline'),
+                                       background="#f0f8ff")
+        
+        # Bind click events for file links
+        self.chat_display.tag_bind("file_link", "<Button-1>", self.handle_file_click)
+        
+        # Add hover effect for file links
+        def on_enter(event):
+            self.chat_display.config(cursor="hand2")
+        
+        def on_leave(event):
+            self.chat_display.config(cursor="")
+        
+        self.chat_display.tag_bind("file_link", "<Enter>", on_enter)
+        self.chat_display.tag_bind("file_link", "<Leave>", on_leave)
     
     def setup_right_panel(self, parent):
         """Setup the right panel with users and rooms"""
@@ -172,7 +190,8 @@ class ChatGUI:
         room_controls.pack(fill=tk.X, pady=(0, 10))
         
         ttk.Button(room_controls, text="Join Room", command=self.join_room_dialog, style='Accent.TButton').pack(fill=tk.X, pady=(0, 2))
-        ttk.Button(room_controls, text="Leave Room", command=self.leave_current_room, style='Error.TButton').pack(fill=tk.X)
+        ttk.Button(room_controls, text="Leave Room", command=self.leave_current_room, style='Error.TButton').pack(fill=tk.X, pady=(0, 2))
+        ttk.Button(room_controls, text="📎 Send File", command=self.send_file_to_room, style='Accent.TButton').pack(fill=tk.X)
         
         # Online users
         users_label = tk.Label(parent, text="Online Users", bg=self.bg_color, fg=self.text_color, font=('Arial', 11, 'bold'))
@@ -200,8 +219,13 @@ class ChatGUI:
         
         # Message input
         self.message_entry = tk.Entry(input_frame, font=('Arial', 11))
-        self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.message_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
         self.message_entry.bind('<Return>', self.send_message)
+        
+        # File button
+        self.file_btn = ttk.Button(input_frame, text="📎", 
+                                  command=self.send_file_private, style='Accent.TButton')
+        self.file_btn.pack(side=tk.RIGHT, padx=(0, 5))
         
         # Send button
         self.send_btn = ttk.Button(input_frame, text="Send Message", 
@@ -214,6 +238,7 @@ class ChatGUI:
         
         self.message_entry.configure(state=state)
         self.send_btn.configure(state=state)
+        self.file_btn.configure(state=state)
         self.users_listbox.configure(state=state)
         self.rooms_listbox.configure(state=state)
         
@@ -294,11 +319,31 @@ class ChatGUI:
         """Listen for messages from the server"""
         while self.connected:
             try:
-                message = self.client_socket.recv(1024).decode('utf-8')
+                # First, receive the length of the message
+                length_data = self.client_socket.recv(4)
+                if not length_data:
+                    break
+                
+                message_length = int.from_bytes(length_data, byteorder='big')
+                
+                # Now receive the actual message
+                message_data = b''
+                while len(message_data) < message_length:
+                    chunk = self.client_socket.recv(min(4096, message_length - len(message_data)))
+                    if not chunk:
+                        break
+                    message_data += chunk
+                
+                if len(message_data) != message_length:
+                    break
+                
+                message = message_data.decode('utf-8')
                 if message:
                     # Handle nickname request (plain text)
                     if "Please enter your nickname:" in message or message.startswith("NICK_REQUEST"):
-                        self.client_socket.send(self.nickname.encode('utf-8'))
+                        nickname_bytes = self.nickname.encode('utf-8')
+                        length_bytes = len(nickname_bytes).to_bytes(4, byteorder='big')
+                        self.client_socket.send(length_bytes + nickname_bytes)
                         continue
                     
                     # Parse JSON message
@@ -360,6 +405,10 @@ class ChatGUI:
             self.root.after(0, lambda: self.update_lists(content))
         elif msg_type == 'ERROR':
             self.root.after(0, lambda: self.add_message_to_chat(f"[{timestamp}] ❌ Error: {content}", "error"))
+        elif msg_type == 'FILE_SENT':
+            self.root.after(0, lambda: self.add_message_to_chat(f"[{timestamp}] 📎 {content}", "system"))
+        elif msg_type == 'FILE_RECEIVED':
+            self.root.after(0, lambda: self.handle_received_file(data))
         else:
             self.root.after(0, lambda: self.add_message_to_chat(f"[{timestamp}] {content}", "system"))
     
@@ -428,8 +477,10 @@ class ChatGUI:
                 'content': content
             }
             message_json = json.dumps(message)
+            message_bytes = message_json.encode('utf-8')
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
             print(f"Sending command: {command} with content: {content}")  # Debug
-            self.client_socket.send(message_json.encode('utf-8'))
+            self.client_socket.send(length_bytes + message_bytes)
         except Exception as e:
             print(f"Error sending command: {e}")  # Debug
             self.add_message_to_chat(f"Error sending command: {e}", "error")
@@ -534,10 +585,276 @@ You can also:
         
         self.root.mainloop()
 
-def main():
-    """Main function to run the GUI chat client"""
+    def send_file_to_room(self):
+        """Send file to current room"""
+        if not self.current_room:
+            messagebox.showwarning("Warning", "You must join a room first!")
+            return
+        
+        self.send_file(target=self.current_room, is_private=False)
+    
+    def send_file_private(self):
+        """Send file privately - either to selected user or ask for username"""
+        # Check if a user is selected
+        selection = self.users_listbox.curselection()
+        if selection:
+            user_info = self.users_listbox.get(selection[0])
+            username = user_info.split(' (')[0]  # Extract username
+            
+            if username == self.nickname:
+                messagebox.showinfo("Info", "You cannot send a file to yourself!")
+                return
+            
+            self.send_file(target=username, is_private=True)
+        else:
+            # Ask for username
+            username = simpledialog.askstring("Send File Privately", 
+                                             "Enter username to send file to:", 
+                                             parent=self.root)
+            if username:
+                self.send_file(target=username, is_private=True)
+    
+    def send_file(self, target, is_private):
+        """Send file to target (room or user)"""
+        if not self.connected:
+            messagebox.showwarning("Warning", "Not connected to server!")
+            return
+        
+        # Open file dialog
+        filetypes = [
+            ("Images", "*.jpg *.jpeg *.png *.gif *.bmp *.webp"),
+            ("Documents", "*.txt *.pdf *.doc *.docx *.rtf"),
+            ("Archives", "*.zip *.rar *.7z"),
+            ("Audio", "*.mp3 *.wav *.ogg"),
+            ("Video", "*.mp4 *.avi *.mov *.webm"),
+            ("Code/Data", "*.py *.js *.html *.css *.json *.xml *.csv"),
+            ("All Files", "*.*")
+        ]
+        
+        filepath = filedialog.askopenfilename(
+            title="Select file to send",
+            filetypes=filetypes,
+            parent=self.root
+        )
+        
+        if not filepath:
+            return
+        
+        try:
+            # Check file size (5MB limit)
+            file_size = os.path.getsize(filepath)
+            max_size = 5 * 1024 * 1024  # 5MB
+            
+            if file_size > max_size:
+                messagebox.showerror("Error", f"File too large! Maximum size is 5MB. Your file is {file_size / (1024*1024):.1f}MB")
+                return
+            
+            # Check file type
+            filename = os.path.basename(filepath)
+            file_ext = os.path.splitext(filename)[1].lower()
+            allowed_types = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp', '.txt', '.pdf', 
+                           '.doc', '.docx', '.rtf', '.zip', '.rar', '.7z', '.mp3', '.wav', 
+                           '.ogg', '.mp4', '.avi', '.mov', '.webm', '.py', '.js', '.html', 
+                           '.css', '.json', '.xml', '.csv'}
+            
+            if file_ext not in allowed_types:
+                messagebox.showerror("Error", f"File type '{file_ext}' not allowed!")
+                return
+            
+            # Read and encode file
+            with open(filepath, 'rb') as f:
+                file_content = f.read()
+            
+            file_content_b64 = base64.b64encode(file_content).decode('utf-8')
+            
+            # Send file command
+            file_command = {
+                'command': 'FILE',
+                'target': target,
+                'is_private': is_private,
+                'file_data': {
+                    'filename': filename,
+                    'content': file_content_b64,
+                    'size': file_size
+                }
+            }
+            
+            # Show progress dialog
+            progress_msg = f"Sending {filename} ({'privately to ' + target if is_private else 'to room ' + target})..."
+            self.add_message_to_chat(progress_msg, "system")
+            
+            message_json = json.dumps(file_command)
+            message_bytes = message_json.encode('utf-8')
+            length_bytes = len(message_bytes).to_bytes(4, byteorder='big')
+            self.client_socket.send(length_bytes + message_bytes)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to send file: {e}")
+    
+    def handle_received_file(self, data):
+        """Handle received file from server"""
+        try:
+            print(f"🔍 DEBUG: Received file data keys: {list(data.keys())}")
+            
+            file_info = data.get('file_info', {})
+            file_content_b64 = data.get('file_content', '')
+            is_private = data.get('is_private', False)
+            timestamp = data.get('timestamp', '')
+            
+            print(f"🔍 DEBUG: file_info keys: {list(file_info.keys())}")
+            print(f"🔍 DEBUG: timestamp: '{timestamp}'")
+            print(f"🔍 DEBUG: file_content length: {len(file_content_b64)}")
+            
+            filename = file_info.get('filename', 'unknown_file')
+            sender = file_info.get('sender', 'Unknown')
+            file_size = file_info.get('size', 0)
+            
+            print(f"🔍 DEBUG: filename: '{filename}', sender: '{sender}', size: {file_size}")
+            
+            # Format file size
+            if file_size < 1024:
+                size_str = f"{file_size} bytes"
+            elif file_size < 1024 * 1024:
+                size_str = f"{file_size / 1024:.1f} KB"
+            else:
+                size_str = f"{file_size / (1024 * 1024):.1f} MB"
+            
+            # Create clickable file link
+            privacy_indicator = "🔒 Private" if is_private else "📢 Room"
+            file_message = f"[{timestamp}] 📎 {privacy_indicator} file from {sender}: {filename} ({size_str}) - Click to download"
+            
+            # Store file data for download
+            if not hasattr(self, 'received_files'):
+                self.received_files = {}
+            
+            file_id = f"{sender}_{filename}_{timestamp}"
+            print(f"🔍 DEBUG: Generated file_id: '{file_id}'")
+            
+            self.received_files[file_id] = {
+                'filename': filename,
+                'content': file_content_b64,
+                'sender': sender,
+                'size': file_size
+            }
+            
+            print(f"🔍 DEBUG: Stored file in received_files. Total files: {len(self.received_files)}")
+            print(f"🔍 DEBUG: Available file IDs: {list(self.received_files.keys())}")
+            
+            # Add clickable message - make the entire line clickable
+            self.chat_display.configure(state=tk.NORMAL)
+            full_message = f"{file_message} (ID: {file_id})\n"
+            self.chat_display.insert(tk.END, full_message, "file_link")
+            self.chat_display.configure(state=tk.DISABLED)
+            self.chat_display.see(tk.END)
+            
+        except Exception as e:
+            self.add_message_to_chat(f"Error receiving file: {e}", "error")
+    
+    def handle_file_click(self, event):
+        """Handle clicking on file links"""
+        try:
+            print(f"🔍 DEBUG: File click detected!")
+            
+            # Get the current position
+            current_pos = self.chat_display.index(tk.CURRENT)
+            print(f"🔍 DEBUG: Click position: {current_pos}")
+            
+            # Get all text with the file_link tag
+            ranges = self.chat_display.tag_ranges("file_link")
+            print(f"🔍 DEBUG: Found {len(ranges)//2} file_link ranges")
+            
+            # Find which file link was clicked
+            for i in range(0, len(ranges), 2):
+                start_pos = ranges[i]
+                end_pos = ranges[i + 1]
+                
+                # Check if the click position is within this range
+                if (self.chat_display.compare(current_pos, ">=", start_pos) and 
+                    self.chat_display.compare(current_pos, "<=", end_pos)):
+                    
+                    # Get the text for this range
+                    link_text = self.chat_display.get(start_pos, end_pos)
+                    print(f"🔍 DEBUG: Clicked link text: '{link_text}'")
+                    
+                    # Extract file ID from the text
+                    if "(ID: " in link_text:
+                        file_id = link_text.split("(ID: ")[1].split(")")[0]
+                        print(f"🔍 DEBUG: Extracted file_id: '{file_id}'")
+                        
+                        if hasattr(self, 'received_files'):
+                            print(f"🔍 DEBUG: Available file IDs: {list(self.received_files.keys())}")
+                            if file_id in self.received_files:
+                                print(f"✅ DEBUG: File found! Proceeding to download...")
+                                self.download_file(file_id)
+                                return
+                            else:
+                                print(f"❌ DEBUG: File ID not found in received_files")
+                        else:
+                            print(f"❌ DEBUG: No received_files attribute")
+                    else:
+                        print(f"❌ DEBUG: No file ID found in link text")
+                    break
+            else:
+                print(f"❌ DEBUG: Click position not found in any file link range")
+                
+        except Exception as e:
+            print(f"❌ DEBUG: Error handling file click: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def download_file(self, file_id):
+        """Download and save received file"""
+        print(f"🔧 DEBUG: download_file called with file_id: '{file_id}'")
+        
+        if not hasattr(self, 'received_files'):
+            print(f"❌ DEBUG: No received_files attribute!")
+            messagebox.showerror("Error", "File not found!")
+            return
+            
+        if file_id not in self.received_files:
+            print(f"❌ DEBUG: file_id '{file_id}' not in received_files: {list(self.received_files.keys())}")
+            messagebox.showerror("Error", "File not found!")
+            return
+        
+        file_data = self.received_files[file_id]
+        filename = file_data['filename']
+        print(f"🔧 DEBUG: Retrieved file data for '{filename}'")
+        
+        # Ask where to save
+        print(f"🔧 DEBUG: Opening file save dialog...")
+        save_path = filedialog.asksaveasfilename(
+            title="Save file as",
+            initialfile=filename,
+            defaultextension=os.path.splitext(filename)[1],
+            parent=self.root
+        )
+        
+        print(f"🔧 DEBUG: User selected save path: '{save_path}'")
+        
+        if save_path:
+            try:
+                print(f"🔧 DEBUG: Decoding and saving file...")
+                # Decode and save file
+                file_content = base64.b64decode(file_data['content'])
+                with open(save_path, 'wb') as f:
+                    f.write(file_content)
+                
+                print(f"✅ DEBUG: File saved successfully!")
+                messagebox.showinfo("Success", f"File saved as: {save_path}")
+                self.add_message_to_chat(f"📥 Downloaded: {filename}", "system")
+                
+                # Remove from memory after successful download
+                del self.received_files[file_id]
+                
+            except Exception as e:
+                print(f"❌ DEBUG: Exception in download_file: {e}")
+                import traceback
+                traceback.print_exc()
+                messagebox.showerror("Error", f"Failed to save file: {e}")
+        else:
+            print(f"🔧 DEBUG: User cancelled file save dialog")
+    
+if __name__ == "__main__":
+    # Start the GUI client
     app = ChatGUI()
     app.run()
-
-if __name__ == "__main__":
-    main()
