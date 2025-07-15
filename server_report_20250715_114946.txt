@@ -1,0 +1,26 @@
+
+CHAT SERVER REPORT
+Generated: 2025-07-15 11:49:46.144616
+=====================================
+
+SERVER STATUS:
+- Status: Running
+- Host: localhost
+- Port: 55555
+
+STATISTICS:
+- Connected Clients: 2
+- Active Rooms: 1
+- Total Messages: 6
+- File Transfers: 1
+
+RECENT ACTIVITY:
+[11:48:46] KJ: hi
+[11:48:49] Khalil: hello
+[11:48:57] KJ: want to see a picture?
+[11:49:00] Khalil: SURE!
+[11:49:11] 📎 Room file from KJ in sadf: L.jpg (9.9 KB)
+[11:49:43] ADMIN BROADCAST: global
+
+RECENT FILE TRANSFERS:
+[11:49:11] 📎 Room file from KJ in sadf: L.jpg (9.9 KB)

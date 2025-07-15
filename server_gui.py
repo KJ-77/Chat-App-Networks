@@ -216,6 +216,7 @@ class ServerGUI:
         self.activity_display.tag_configure("message", foreground="#66ccff")
         self.activity_display.tag_configure("room", foreground="#ffcc66")
         self.activity_display.tag_configure("admin", foreground="#ff66ff")
+        self.activity_display.tag_configure("file", foreground="#00ff88")
     
     def setup_clients_tab(self):
         """Setup clients management tab"""
@@ -332,6 +333,7 @@ class ServerGUI:
         self.logs_display.tag_configure("private", foreground="#ff66ff")
         self.logs_display.tag_configure("system", foreground="#ffcc66")
         self.logs_display.tag_configure("admin", foreground="#ff6666")
+        self.logs_display.tag_configure("file", foreground="#00ff88")
     
     def setup_admin_tab(self):
         """Setup admin tools tab"""
@@ -662,7 +664,7 @@ class ServerGUI:
         
         try:
             filename = f"chat_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 f.write(f"Chat Server Logs - Exported on {datetime.now()}\n")
                 f.write("=" * 50 + "\n\n")
                 for log_entry in self.message_log:
@@ -680,6 +682,13 @@ class ServerGUI:
             return
         
         try:
+            # Count file transfers from logs
+            file_transfers = [entry for entry in self.message_log if '📎' in entry['message']]
+            total_files = len(file_transfers)
+            
+            # Get recent file transfers
+            recent_files = file_transfers[-10:] if file_transfers else []
+            
             report = f"""
 CHAT SERVER REPORT
 Generated: {datetime.now()}
@@ -694,13 +703,17 @@ STATISTICS:
 - Connected Clients: {len(self.server.clients) if self.server else 0}
 - Active Rooms: {len(self.server.rooms) if self.server else 0}
 - Total Messages: {len(self.message_log)}
+- File Transfers: {total_files}
 
 RECENT ACTIVITY:
 {chr(10).join([f"[{entry['timestamp']}] {entry['message']}" for entry in self.message_log[-10:]])}
+
+RECENT FILE TRANSFERS:
+{chr(10).join([f"[{entry['timestamp']}] {entry['message']}" for entry in recent_files]) if recent_files else "No recent file transfers"}
 """
             
             filename = f"server_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
-            with open(filename, 'w') as f:
+            with open(filename, 'w', encoding='utf-8') as f:
                 f.write(report)
             
             messagebox.showinfo("Success", f"Report generated: {filename}")
@@ -735,6 +748,28 @@ class EnhancedChatServer(ChatServer):
         super().__init__(host, port)
         self.gui = gui
     
+    def handle_file_transfer(self, client_socket, message):
+        """Enhanced file transfer handling with GUI logging"""
+        try:
+            nickname = self.clients[client_socket]['nickname']
+            file_data = message.get('file_data', {})
+            filename = file_data.get('filename', '')
+            file_size = file_data.get('size', 0)
+            target = message.get('target', '')
+            is_private = message.get('is_private', False)
+            
+            # Call parent method first
+            super().handle_file_transfer(client_socket, message)
+            
+            # Log successful file transfer
+            self.log_file_transfer(nickname, filename, file_size, target, is_private)
+            
+        except Exception as e:
+            if self.gui:
+                self.gui.log_activity(f"File transfer error: {e}", "disconnect")
+            # Re-raise the exception to maintain original error handling
+            raise
+    
     def handle_client(self, client_socket, address):
         """Enhanced client handling with GUI logging"""
         try:
@@ -755,6 +790,21 @@ class EnhancedChatServer(ChatServer):
         # Only log non-echo messages (don't log "You: ..." messages)
         if self.gui and msg_type in ['PUBLIC_MSG', 'PRIVATE_MSG'] and not content.startswith('You: '):
             self.gui.log_message(content, msg_type.lower().replace('_msg', ''))
+    
+    def log_file_transfer(self, nickname, filename, file_size, target, is_private):
+        """Log file transfer for admin visibility"""
+        if self.gui:
+            size_kb = file_size / 1024
+            if is_private:
+                activity_msg = f"📎 {nickname} sent file '{filename}' ({size_kb:.1f} KB) privately to {target}"
+                log_msg = f"📎 Private file from {nickname} to {target}: {filename} ({size_kb:.1f} KB)"
+                self.gui.log_activity(activity_msg, "file")
+                self.gui.log_message(log_msg, "file")
+            else:
+                activity_msg = f"📎 {nickname} sent file '{filename}' ({size_kb:.1f} KB) to room {target}"
+                log_msg = f"📎 Room file from {nickname} in {target}: {filename} ({size_kb:.1f} KB)"
+                self.gui.log_activity(activity_msg, "file")
+                self.gui.log_message(log_msg, "file")
     
     def disconnect_client(self, client_socket):
         """Enhanced client disconnection with logging"""
